@@ -8,8 +8,7 @@
     "bz2",
     "stream",
     "streaming",
-    "decompress",
-    "through"
+    "decompress"
   ],
   "scripts": {
     "prepare": "mkdir -p dist && browserify -s unbzip2Stream index.js | uglifyjs > dist/unbzip2-stream.min.js",
@@ -44,8 +43,7 @@
     "uglify-js": "^3.0.10"
   },
   "dependencies": {
-    "buffer": "^5.2.1",
-    "through": "^2.3.8"
+    "buffer": "^5.2.1"
   },
   "license": "MIT"
 }

@@ -16,6 +16,51 @@ test('accepts data in both write and end', function(t) {
     unbz2.end(compressed.subarray(4));
 });
 
+test('calls callback of end', function(t) {
+    t.plan(1);
+    var compressed = fs.readFileSync('test/fixtures/small.bz2');
+    var unbz2 = unbzip2Stream();
+    unbz2.on('error', function(err) { t.fail(err); });
+    unbz2.pipe(concat(function(data) {}));
+    unbz2.end(compressed, undefined, function() { t.pass('called'); });
+});
+
+// supported node versions produce an inconsistent number
+// of readable events, causing this test to fail in node
+// 10 and 11
+// see https://github.com/nodejs/node/issues/25810
+test.skip('supports on-readable API style', function(t) {
+    t.plan(4);
+    var buffer = '';
+    var compressed = fs.readFileSync('test/fixtures/small.bz2');
+    var unbz2 = unbzip2Stream();
+    unbz2.on('error', function(err) { t.fail(err); });
+    unbz2.on('readable', function() {
+        var result = unbz2.read();
+        if (result)
+            buffer += result.toString('utf-8');
+        else {
+            t.equal(result, null);
+            t.equal(buffer, ' ');
+        }
+    });
+    unbz2.end(compressed);
+});
+
+test('supports on-data API style', function(t) {
+    t.plan(2);
+    var compressed = fs.readFileSync('test/fixtures/small.bz2');
+    var unbz2 = unbzip2Stream();
+    unbz2.on('error', function(err) { t.fail(err); });
+    unbz2.on('data', function(data) {
+        t.equal(data.toString('utf-8'), ' ');
+    });
+    unbz2.on('end', function() {
+        t.pass('end event emitted');
+    });
+    unbz2.end(compressed);
+});
+
 test('accepts concatenated bz2 streams', function(t) {
     t.plan(1);
     var compressed = fs.readFileSync('test/fixtures/concatenated.bz2');
