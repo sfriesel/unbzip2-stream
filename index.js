@@ -1,93 +1,60 @@
-var through = require('through');
-var bz2 = require('./lib/bzip2');
-var bitIterator = require('./lib/bit_iterator');
+var Duplex = require('stream').Duplex;
 
-module.exports = unbzip2Stream;
+var BitReader = require('./lib/bitreader');
+var Bzip2 = require('./lib/bzip2');
 
-function unbzip2Stream() {
-    var bufferQueue = [];
-    var hasBytes = 0;
-    var blockSize = 0;
-    var broken = false;
-    var done = false;
-    var bitReader = null;
-    var streamCRC = null;
+module.exports = function() { return new Unbzip2Stream(); };
 
-    function decompressBlock(push){
-        if(!blockSize){
-            blockSize = bz2.header(bitReader);
-            //console.error("got header of", blockSize);
-            streamCRC = 0;
-            return true;
-        }else{
-            var bufsize = 100000 * blockSize;
-            var buf = new Int32Array(bufsize);
-            
-            var chunk = [];
-            var f = function(b) {
-                chunk.push(b);
-            };
-
-            streamCRC = bz2.decompress(bitReader, f, buf, bufsize, streamCRC);
-            if (streamCRC === null) {
-                // reset for next bzip2 header
-                blockSize = 0;
-                return false;
-            }else{
-                //console.error('decompressed', chunk.length,'bytes');
-                push(Buffer.from(chunk));
-                return true;
-            }
-        }
-    }
-
-    var outlength = 0;
-    function decompressAndQueue(stream) {
-        if (broken) return;
-        try {
-            return decompressBlock(function(d) {
-                stream.queue(d);
-                if (d !== null) {
-                    //console.error('write at', outlength.toString(16));
-                    outlength += d.length;
-                } else {
-                    //console.error('written EOS');
-                }
-            });
-        } catch(e) {
-            //console.error(e);
-            stream.emit('error', e);
-            broken = true;
-            return false;
-        }
-    }
-
-    return through(
-        function write(data) {
-            //console.error('received', data.length,'bytes in', typeof data);
-            bufferQueue.push(data);
-            hasBytes += data.length;
-            if (bitReader === null) {
-                bitReader = bitIterator(function() {
-                    return bufferQueue.shift();
-                });
-            }
-            while (!broken && hasBytes - bitReader.bytesRead + 1 >= ((25000 + 100000 * blockSize) || 4)){
-                //console.error('decompressing with', hasBytes - bitReader.bytesRead + 1, 'bytes in buffer');
-                decompressAndQueue(this);
-            }
-        },
-        function end(x) {
-            //console.error(x,'last compressing with', hasBytes, 'bytes in buffer');
-            while (!broken && bitReader && hasBytes > bitReader.bytesRead){
-                decompressAndQueue(this);
-            }
-            if (!broken) {
-                if (streamCRC !== null)
-                    this.emit('error', new Error("input stream ended prematurely"));
-                this.queue(null);
-            }
-        }
-    );
+function Unbzip2Stream() {
+  Duplex.call(this, {'readableHighWaterMark': 0x100000});
+  this._bitReader = new BitReader();
+  this._bz2 = new Bzip2();
+  this._pendingReadSize = 0;
+  this._writecb = null;
+  this._finalcb = null;
 }
+Unbzip2Stream.prototype = Object.create(Duplex.prototype);
 
+Unbzip2Stream.prototype._write = function(chunk, encoding, callback) {
+  this._bitReader.push(chunk);
+  if (!this._bitReader.hasBits(925000*8))
+    return callback();
+  if (this._pendingReadSize > 0) {
+    var self = this;
+    process.nextTick(function() {self._read(self._pendingReadSize);})
+  }
+  this._writecb = callback;
+};
+
+Unbzip2Stream.prototype._final = function(callback) {
+  this._finalcb = callback;
+  if (this._pendingReadSize > 0) {
+    var self = this;
+    process.nextTick(function() {self._read(self._pendingReadSize);})
+  }
+};
+
+Unbzip2Stream.prototype._read = function(size) {
+  size = size || 0x100000;
+  this._pendingReadSize = 0;
+  try {
+    var isReadable = this._bz2.fillBlock(this._bitReader, this._finalcb ? 1 : 925000*8);
+    if (isReadable)
+      this.push(this._bz2.produce(size));
+    else if (this._finalcb) {
+      if (!this._bz2.isValidEnd())
+        throw new Error("input stream ended unexpectedly");
+      this._finalcb();
+      this.push(null);
+    } else {
+      this._pendingReadSize = size;
+      if (this._writecb) {
+        process.nextTick(this._writecb);
+        this._writecb = null;
+      }
+    }
+  }
+  catch (e) {
+    this.destroy(e);
+  }
+};

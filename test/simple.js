@@ -97,10 +97,11 @@ test('should emit error when stream is broken in a different way?', function(t) 
     unbz2.on('error', function (err) {
         t.ok(true, err);
     });
-    unbz2.on('close', function (err) {
+    unbz2.on('end', function (err) {
         t.ok(false, "Should not reach end of stream without failing.");
     });
     unbz2.end(truncated);
+    unbz2.resume();
 });
 
 test('detects incomplete streams', function(t) {
@@ -111,4 +112,5 @@ test('detects incomplete streams', function(t) {
         t.ok(true, err);
     });
     unbz2.end(incomplete);
+    unbz2.resume();
 });
